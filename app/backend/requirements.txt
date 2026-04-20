@@ -400,7 +400,7 @@ typing-inspection==0.4.2
     # via pydantic
 urllib3==2.6.3
     # via requests
-uvicorn==0.30.6
+uvicorn==0.44.0
     # via -r requirements.in
 werkzeug==3.1.8
     # via
