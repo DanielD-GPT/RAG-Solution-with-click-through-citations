@@ -138,13 +138,28 @@ Each is wired from `main.bicep` immediately after the resource it observes; all 
 
 ### 4. Workload Identity Federation (WIF) for the backend MSAL flow
 
-The current Python backend's MSAL confidential client uses `AZURE_SERVER_APP_SECRET` for OBO token exchange. To eliminate this secret:
+**To adopt:**
 
-1. Add a federated identity credential to the Entra **server** app that trusts the App Service / Container App **system-assigned managed identity** as a subject.
-2. Update `app/backend/core/authentication.py` to use `azure.identity.ManagedIdentityCredential().get_token('api://AzureADTokenExchange/.default')` as the `client_assertion` for the MSAL `ConfidentialClientApplication`.
-3. Remove `AZURE_SERVER_APP_SECRET` and `AZURE_CLIENT_APP_SECRET` from app settings entirely.
+```pwsh
+azd env set AZURE_USE_WORKLOAD_IDENTITY_FEDERATION true
+azd provision    # bicep flips on the env var and skips AZURE_SERVER_APP_SECRET
+                 # auth_update.py adds the federated identity credential on the server app
+azd deploy
+```
 
-**Note:** App Service / Container Apps **Easy Auth** (`authsettingsV2`) still requires a client secret for the OIDC handshake — it does not support WIF as of this writing. If you adopt WIF for the backend MSAL flow, set `disableAppServicesAuthentication=true` so the Python app handles sign-in directly via MSAL.
+When `useWorkloadIdentityFederation=true`:
+
+- `infra/main.bicep` stops projecting `AZURE_SERVER_APP_SECRET` into the App Service / Container App settings and sets `AZURE_USE_WORKLOAD_IDENTITY_FEDERATION=true` on the backend.
+- The Python `AuthenticationHelper` configures the MSAL `ConfidentialClientApplication` with a callable `client_assertion` that mints a fresh JWT from the backend's managed identity for the `api://AzureADTokenExchange/.default` audience.
+- `scripts/auth_update.py` (post-provision) adds a federated identity credential on the **server** Entra app trusting the backend MI's object ID (issuer `https://login.microsoftonline.com/<tenant>/v2.0`, audience `api://AzureADTokenExchange`).
+
+`AZURE_CLIENT_APP_SECRET` is still required when `disableAppServicesAuthentication=false`, because **Easy Auth** (`authsettingsV2`) on App Service / Container Apps does not currently support WIF as the OIDC client. If you want to eliminate the client secret too, set `disableAppServicesAuthentication=true` and let the Python app handle sign-in directly via MSAL.
+
+After rotating to WIF, you can clear the now-unused server secret:
+
+```pwsh
+azd env unset AZURE_SERVER_APP_SECRET
+```
 
 ---
 
@@ -156,7 +171,7 @@ These were the five concrete dangers identified in the architecture review that 
 2. **`/content/<path>` blob-proxy SSRF / path traversal** — mitigated by `_sanitize_content_path` in [`app/backend/app.py`](app/backend/app.py) with tests in [`tests/test_content_path_validation.py`](tests/test_content_path_validation.py). The container boundary is enforced by `BlobManager.download_blob` which binds to a single configured container.
 3. **Data exfiltration via AI Search** — mitigated by `disableLocalAuth=true` on Search, `azureOpenAiDisableKeys=true` on OpenAI, and managed-identity-only data plane. Private endpoint default further prevents direct internet access. With ACLs enabled (`enforceAccessControl=true`) the index is filtered per-user.
 4. **Prompt injection** — partially mitigated. The system prompt instructs the model to refuse instructions embedded in documents, and the citation link route now refuses arbitrary URLs. **Residual risk: the model may still leak indexed content in violation of policy.** A content-safety / prompt-shield layer was deferred per the design discussion; consider Azure AI Content Safety prompt shields as a follow-up if you index untrusted documents.
-5. **Secrets in plaintext app settings** — partially mitigated. Default secret count is reduced (Storage and Search use MI, OpenAI is keyless). Entra client/server secrets still land in plaintext app settings by default; see "Azure Key Vault for Entra secrets" above for the recommended migration. Tracking issue: open one in your fork referencing this section.
+5. **Secrets in plaintext app settings** — partially mitigated. Default secret count is reduced (Storage and Search use MI, OpenAI is keyless). The **server** Entra app secret can be removed entirely via Workload Identity Federation (see opt-in recipe above: `AZURE_USE_WORKLOAD_IDENTITY_FEDERATION=true`). The **client** Entra app secret is still required while Easy Auth handles sign-in; place it in Key Vault per "Azure Key Vault for Entra secrets" above, or set `disableAppServicesAuthentication=true` and let the app handle sign-in directly via MSAL to eliminate it too.
 
 ---
 
@@ -175,7 +190,8 @@ Before going live with this stack:
 - [ ] Dependabot is enabled in repository settings.
 - [ ] Front Door + WAF is in front of the application, and the App Service / Container App rejects direct traffic (verify by curling the origin hostname directly — it should fail).
 - [ ] Diagnostic settings on every data-plane resource route to a Log Analytics workspace; alerts are configured for high-severity categories.
-- [ ] Entra app client secret stored in Key Vault, referenced via `@Microsoft.KeyVault(...)`, **never** in plaintext app settings.
+- [ ] Entra **server** app secret eliminated via Workload Identity Federation (`AZURE_USE_WORKLOAD_IDENTITY_FEDERATION=true`) **or** stored in Key Vault.
+- [ ] Entra **client** app secret stored in Key Vault, referenced via `@Microsoft.KeyVault(...)`, **never** in plaintext app settings (or removed entirely by disabling Easy Auth in favor of in-app MSAL).
 
 ---
 

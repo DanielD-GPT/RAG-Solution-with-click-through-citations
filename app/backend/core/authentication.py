@@ -33,6 +33,10 @@ class AuthError(Exception):
 
 class AuthenticationHelper:
     scope: str = "https://search.azure.com/.default"
+    # Audience used when a managed identity issues a token that is then exchanged
+    # as a client assertion for the server Entra app via Workload Identity Federation.
+    # See https://learn.microsoft.com/entra/workload-id/workload-identity-federation
+    federated_credential_audience: str = "api://AzureADTokenExchange/.default"
 
     def __init__(
         self,
@@ -44,12 +48,16 @@ class AuthenticationHelper:
         tenant_id: Optional[str],
         enforce_access_control: bool = False,
         enable_unauthenticated_access: bool = False,
+        use_federated_credential: bool = False,
+        azure_credential: Optional[Any] = None,
     ):
         self.use_authentication = use_authentication
         self.server_app_id = server_app_id
         self.server_app_secret = server_app_secret
         self.client_app_id = client_app_id
         self.tenant_id = tenant_id
+        self.use_federated_credential = use_federated_credential
+        self.azure_credential = azure_credential
         self.authority = f"https://login.microsoftonline.com/{tenant_id}"
         # Depending on if requestedAccessTokenVersion is 1 or 2, the issuer and audience of the token may be different
         # See https://learn.microsoft.com/graph/api/resources/apiapplication
@@ -66,13 +74,36 @@ class AuthenticationHelper:
             self.has_auth_fields = "oids" in field_names and "groups" in field_names
             self.enforce_access_control = enforce_access_control
             self.enable_unauthenticated_access = enable_unauthenticated_access
+            if self.use_federated_credential:
+                if self.azure_credential is None:
+                    raise ValueError(
+                        "use_federated_credential=True requires an azure_credential (typically ManagedIdentityCredential)."
+                    )
+                # MSAL accepts a callable that returns a fresh signed JWT each time
+                # it needs to authenticate to STS. We mint that JWT from the workload's
+                # managed identity for the AzureADTokenExchange audience, and Entra
+                # validates it against the federated identity credential configured on
+                # the server app.
+                client_credential: Any = {"client_assertion": self._mint_federated_client_assertion}
+            else:
+                client_credential = server_app_secret
             self.confidential_client = ConfidentialClientApplication(
-                server_app_id, authority=self.authority, client_credential=server_app_secret, token_cache=TokenCache()
+                server_app_id, authority=self.authority, client_credential=client_credential, token_cache=TokenCache()
             )
         else:
             self.has_auth_fields = False
             self.enforce_access_control = False
             self.enable_unauthenticated_access = True
+
+    def _mint_federated_client_assertion(self) -> str:
+        """Fetch a fresh assertion JWT from the workload's managed identity.
+
+        Called by MSAL each time it needs to refresh the server app's access tokens.
+        """
+        if self.azure_credential is None:
+            raise RuntimeError("Federated credential requested but no azure_credential is configured.")
+        token = self.azure_credential.get_token(self.federated_credential_audience)
+        return token.token
 
     def get_auth_setup_for_client(self) -> dict[str, Any]:
         # returns MSAL.js settings used by the client app
