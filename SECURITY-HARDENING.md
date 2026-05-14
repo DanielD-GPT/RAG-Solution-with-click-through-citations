@@ -92,35 +92,37 @@ These items ship as standalone Bicep modules so you can adopt them in your envir
 
 4. Add a private endpoint for the Key Vault (re-use the existing private-endpoint pattern in `main.bicep`).
 
-### 2. Azure Front Door + WAF — [`infra/core/networking/frontdoor-waf.bicep`](infra/core/networking/frontdoor-waf.bicep)
+### 2. Azure Front Door + WAF — opt-in via `useFrontDoor=true`
 
-**Why it isn't on by default:** the Entra app registration's redirect URIs must include the Front Door hostname, which is only known after the AFD profile is deployed. This requires a manual update (or a follow-up `scripts/auth_update.py` run).
+Wired into `main.bicep` as an opt-in. When `useFrontDoor=true`:
+
+- A **Premium Front Door profile** is provisioned together with a **WAF policy** that enables Microsoft's `DefaultRuleSet 2.1` + `BotManagerRuleSet 1.1`, a configurable per-minute rate limit, and an optional geo-allowlist.
+- The App Service is locked down with an `ipSecurityRestrictions` rule that matches the `AzureFrontDoor.Backend` service tag **and** the `X-Azure-FDID` header containing the paired Front Door's unique ID. Direct calls to the App Service hostname return 403.
+- For the Container Apps target the same Front Door ID is injected as `AZURE_EXPECTED_FRONT_DOOR_ID` so the backend can enforce the header in middleware — Container Apps' native ingress IP restrictions are CIDR-only and cannot match headers.
 
 **To adopt:**
 
-```bicep
-module afd 'core/networking/frontdoor-waf.bicep' = {
-  scope: resourceGroup
-  name: 'afd'
-  params: {
-    name: 'afd-${resourceToken}'
-    tags: tags
-    originHostName: deploymentTarget == 'appservice'
-      ? backend!.outputs.defaultHostname
-      : acaBackend!.outputs.fqdn
-    allowedCountries: []           // [ 'US', 'CA', ... ] to geo-fence
-    rateLimitThresholdPerMinute: 600
-    wafMode: 'Prevention'
-  }
-}
+```pwsh
+azd env set AZURE_USE_FRONT_DOOR true
+azd env set AZURE_FRONT_DOOR_WAF_MODE Prevention       # or Detection while tuning
+azd env set AZURE_FRONT_DOOR_RATE_LIMIT_PER_MINUTE 600
+azd up
 ```
 
-Then **lock down the origin** so it only accepts traffic from Front Door:
+Optional: pass `frontDoorAllowedCountries` (e.g. `[ 'US', 'CA' ]`) to geo-fence.
 
-- **App Service:** add an IP restriction with header match on `X-Azure-FDID = <afd.outputs.frontDoorId>`. Without this, the App Service public hostname is still directly reachable and Front Door is bypassable.
-- **Container Apps:** restrict ingress to the Front Door egress IP range OR run Container Apps behind an internal-only ingress and pair Front Door with Private Link.
+After deployment:
 
-Finally, register the Front Door hostname as a redirect URI on the Entra client app and run `scripts/auth_update.py` (or the equivalent).
+1. Read the AFD endpoint hostname from `az afd endpoint show --resource-group <rg> --profile-name afd-<token> --endpoint-name <token>-endpoint --query hostName -o tsv`.
+2. Add `https://<afd-hostname>` to the **redirect URIs** of the Entra client app and rerun `scripts/auth_update.py`.
+3. Verify lockdown: `curl https://<app-service>.azurewebsites.net/` must return `403` (App Service) or be unreachable / unauthorized (Container Apps once the middleware is in place).
+
+**Two-module design.** Bicep cannot create a Front Door origin in the same pass as the App Service it points to without a circular dependency on the AFD ID flowing back into App Service IP rules. The wiring is split:
+
+- `infra/core/networking/frontdoor-waf.bicep` — phase 1: profile + WAF policy + endpoint + security policy. Emits `frontDoorId` consumed by the App Service IP rule and the Container App env var.
+- `infra/core/networking/frontdoor-origin.bicep` — phase 2: origin group + origin + route, referenced via `existing`. Runs after the backend module so the origin hostname is known.
+
+**Caveat — Container Apps middleware not yet implemented.** Setting `AZURE_EXPECTED_FRONT_DOOR_ID` is necessary but not sufficient for the Container Apps target; you must add a `before_request` hook in `app/backend/app.py` that rejects requests whose `X-Azure-FDID` header doesn't match. Tracked as a follow-up.
 
 ### 3. Diagnostic settings → Log Analytics *(wired in by default)*
 

@@ -323,6 +323,15 @@
     "useVpnGateway": {
       "value": "${AZURE_USE_VPN_GATEWAY=false}"
     },
+    "useFrontDoor": {
+      "value": "${AZURE_USE_FRONT_DOOR=false}"
+    },
+    "frontDoorWafMode": {
+      "value": "${AZURE_FRONT_DOOR_WAF_MODE=Prevention}"
+    },
+    "frontDoorRateLimitPerMinute": {
+      "value": "${AZURE_FRONT_DOOR_RATE_LIMIT_PER_MINUTE=600}"
+    },
     "bypass": {
       "value": "${AZURE_NETWORK_BYPASS=None}"
     },
