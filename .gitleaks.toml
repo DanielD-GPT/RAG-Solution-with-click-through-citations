@@ -1,0 +1,27 @@
+# Gitleaks configuration. Extends the default ruleset and allowlists known
+# documentation-only patterns.
+#
+# https://github.com/gitleaks/gitleaks/blob/master/config/gitleaks.toml
+title = "RAG-Solution gitleaks config"
+
+[extend]
+# Inherit all default rules.
+useDefault = true
+
+[allowlist]
+description = "Repository-wide allowlist for documentation samples and templated placeholders."
+paths = [
+  '''(?i)docs/.*\.md''',
+  '''(?i)README\.md''',
+  '''(?i)SECURITY-HARDENING\.md''',
+  '''(?i)\.github/.*\.md''',
+  '''(?i)tests/.*''',
+]
+regexes = [
+  # azd-style placeholder tokens that look like secrets but are templates.
+  '''\$\{[A-Z0-9_]+\}''',
+  # Obvious placeholder patterns.
+  '''(?i)<your[- ].*?>''',
+  '''(?i)<replace.*?>''',
+  '''(?i)example\.com''',
+]

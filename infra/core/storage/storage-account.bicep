@@ -14,6 +14,12 @@ param allowSharedKeyAccess bool = true
 param containers array = []
 param defaultToOAuthAuthentication bool = false
 param deleteRetentionPolicy object = {}
+@description('Container-level soft delete retention policy. Defaults to 30 days enabled.')
+param containerDeleteRetentionPolicy object = { enabled: true, days: 30 }
+@description('Whether to enable blob versioning. Recommended on for any production-bound storage.')
+param isVersioningEnabled bool = true
+@description('Whether to enable change feed. Useful for audit and forensics.')
+param changeFeedEnabled bool = false
 @allowed([ 'AzureDnsZone', 'Standard' ])
 param dnsEndpointType string = 'Standard'
 param isHnsEnabled bool = false
@@ -55,6 +61,11 @@ resource storage 'Microsoft.Storage/storageAccounts@2024-01-01' = {
     name: 'default'
     properties: {
       deleteRetentionPolicy: deleteRetentionPolicy
+      containerDeleteRetentionPolicy: containerDeleteRetentionPolicy
+      isVersioningEnabled: isVersioningEnabled
+      changeFeed: {
+        enabled: changeFeedEnabled
+      }
     }
     resource container 'containers' = [for container in containers: {
       name: container.name

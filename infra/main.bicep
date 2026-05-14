@@ -274,8 +274,14 @@ var knowledgeBase = {
 param tenantId string = tenant().tenantId
 param authTenantId string = ''
 
-// Used for the optional login and document level access control system
-param useAuthentication bool = false
+// SECURITY DEFAULT: authentication is REQUIRED. The previous default of `false`
+// produced a publicly reachable chat endpoint that any internet caller could use
+// to consume Azure OpenAI quota and exfiltrate indexed documents. Set to `false`
+// only for short-lived demos in an isolated subscription with a spend cap.
+// If you set useAuthentication=true (the default), you MUST also provide
+// clientAppId and serverAppId — the assertions below will fail the deployment
+// otherwise.
+param useAuthentication bool = true
 param enforceAccessControl bool = false
 // Force using MSAL app authentication instead of built-in App Service authentication
 // https://learn.microsoft.com/azure/app-service/overview-authentication-authorization
@@ -289,19 +295,36 @@ param clientAppId string = ''
 @secure()
 param clientAppSecret string = ''
 
-// Used for optional CORS support for alternate frontends
-param allowedOrigin string = '' // should start with https://, shouldn't end with a /
+// Fail-fast guard: refuse to provision an unauthenticated public deployment by
+// accident. If you genuinely want a demo without Entra, set useAuthentication=false
+// explicitly.
+assert authConfigured = !useAuthentication || (!empty(clientAppId) && !empty(serverAppId))
+
+// Used for optional CORS support for alternate frontends. Each entry MUST be a
+// full https:// origin with no trailing slash. Multiple values are separated by
+// ';'. http:// entries are filtered out below.
+param allowedOrigin string = ''
 
 @allowed(['None', 'AzureServices'])
-@description('If allowedIp is set, whether azure services are allowed to bypass the storage and AI services firewall.')
-param bypass string = 'AzureServices'
+@description('If allowedIp is set, whether azure services are allowed to bypass the storage and AI services firewall. Default tightened from AzureServices to None.')
+param bypass string = 'None'
 
-@description('Public network access value for all deployed resources')
+@description('Public network access value for the application ingress (App Service / Container App). Keep Enabled and front with WAF.')
 @allowed(['Enabled', 'Disabled'])
-param publicNetworkAccess string = 'Enabled'
+param appPublicNetworkAccess string = 'Enabled'
 
-@description('Add a private endpoints for network connectivity')
-param usePrivateEndpoint bool = false
+@description('Public network access value for data-plane resources (Storage, Search, Cosmos, OpenAI, Document Intelligence, Vision, Content Understanding, Speech). Default tightened to Disabled — use private endpoints.')
+@allowed(['Enabled', 'Disabled'])
+param dataPlanePublicNetworkAccess string = 'Disabled'
+
+// Back-compat shim. Older parameter files / docs reference `publicNetworkAccess`.
+// Treat it as the data-plane setting for everything except app ingress.
+@description('Deprecated: use dataPlanePublicNetworkAccess and appPublicNetworkAccess instead. Kept for back-compat — applied to the data plane.')
+@allowed(['Enabled', 'Disabled'])
+param publicNetworkAccess string = dataPlanePublicNetworkAccess
+
+@description('Add private endpoints for data-plane resources. Default tightened to true to match dataPlanePublicNetworkAccess=Disabled.')
+param usePrivateEndpoint bool = true
 
 @description('Use a P2S VPN Gateway for secure access to the private endpoints')
 param useVpnGateway bool = false
@@ -384,12 +407,27 @@ param containerRegistryName string = deploymentTarget == 'containerapps'
 
 // Configure CORS for allowing different web apps to use the backend
 // For more information please see https://developer.mozilla.org/en-US/docs/Web/HTTP/CORS
-var msftAllowedOrigins = [ 'https://portal.azure.com', 'https://ms.portal.azure.com' ]
+// Only attach the Azure portal origins when an Entra clientAppId is configured —
+// we don't need the portal in CORS otherwise.
+var msftAllowedOrigins = !empty(clientAppId) ? [ 'https://portal.azure.com', 'https://ms.portal.azure.com' ] : []
 var loginEndpoint = environment().authentication.loginEndpoint
 var loginEndpointFixed = lastIndexOf(loginEndpoint, '/') == length(loginEndpoint) - 1 ? substring(loginEndpoint, 0, max(length(loginEndpoint) - 1, 0)) : loginEndpoint
-var allMsftAllowedOrigins = !(empty(clientAppId)) ? union(msftAllowedOrigins, [ loginEndpointFixed ]) : msftAllowedOrigins
-// Combine custom origins with Microsoft origins, remove any empty origin strings and remove any duplicate origins
-var allowedOrigins = reduce(filter(union(split(allowedOrigin, ';'), allMsftAllowedOrigins), o => length(trim(o)) > 0), [], (cur, next) => union(cur, [next]))
+var allMsftAllowedOrigins = !empty(clientAppId) ? union(msftAllowedOrigins, [ loginEndpointFixed ]) : msftAllowedOrigins
+// Combine custom origins with Microsoft origins. Drop empties, anything that
+// doesn't start with `https://`, and anything that ends with `/` — they are
+// almost always a misconfiguration that leads to surprising CORS holes.
+var allowedOrigins = reduce(
+  filter(
+    union(split(allowedOrigin, ';'), allMsftAllowedOrigins),
+    o => length(trim(o)) > 0 && startsWith(toLower(trim(o)), 'https://') && !endsWith(trim(o), '/')
+  ),
+  [],
+  (cur, next) => union(cur, [next])
+)
+
+// Default network ACL action for data-plane resources. When public network
+// access is disabled we also deny non-private-endpoint traffic explicitly.
+var dataPlaneNetworkAclsDefaultAction = dataPlanePublicNetworkAccess == 'Disabled' ? 'Deny' : 'Allow'
 
 // Organize resources in a resource group
 resource resourceGroup 'Microsoft.Resources/resourceGroups@2024-11-01' = {
@@ -588,7 +626,7 @@ module backend 'core/host/appservice.bicep' = if (deploymentTarget == 'appservic
     scmDoBuildDuringDeployment: true
     managedIdentity: true
     virtualNetworkSubnetId: usePrivateEndpoint ? isolation!.outputs.appSubnetId : ''
-    publicNetworkAccess: publicNetworkAccess
+    publicNetworkAccess: appPublicNetworkAccess
     allowedOrigins: allowedOrigins
     clientAppId: clientAppId
     serverAppId: serverAppId
@@ -786,7 +824,7 @@ module openAi 'br/public:avm/res/cognitive-services/account:0.7.2' = if (isAzure
       : '${abbrs.cognitiveServicesAccounts}${resourceToken}'
     publicNetworkAccess: publicNetworkAccess
     networkAcls: {
-      defaultAction: 'Allow'
+      defaultAction: dataPlaneNetworkAclsDefaultAction
       bypass: bypass
     }
     sku: openAiSkuName
@@ -811,7 +849,7 @@ module documentIntelligence 'br/public:avm/res/cognitive-services/account:0.7.2'
       : '${abbrs.cognitiveServicesDocumentIntelligence}${resourceToken}'
     publicNetworkAccess: publicNetworkAccess
     networkAcls: {
-      defaultAction: 'Allow'
+      defaultAction: dataPlaneNetworkAclsDefaultAction
     }
     location: documentIntelligenceResourceGroupLocation
     disableLocalAuth: true
@@ -830,7 +868,7 @@ module vision 'br/public:avm/res/cognitive-services/account:0.7.2' = if (useMult
       : '${abbrs.cognitiveServicesVision}${resourceToken}'
     kind: 'CognitiveServices'
     networkAcls: {
-      defaultAction: 'Allow'
+      defaultAction: dataPlaneNetworkAclsDefaultAction
     }
     customSubDomainName: !empty(visionServiceName)
       ? visionServiceName
@@ -852,7 +890,7 @@ module contentUnderstanding 'br/public:avm/res/cognitive-services/account:0.7.2'
       : '${abbrs.cognitiveServicesContentUnderstanding}${resourceToken}'
     kind: 'AIServices'
     networkAcls: {
-      defaultAction: 'Allow'
+      defaultAction: dataPlaneNetworkAclsDefaultAction
     }
     customSubDomainName: !empty(contentUnderstandingServiceName)
       ? contentUnderstandingServiceName
@@ -872,7 +910,7 @@ module speech 'br/public:avm/res/cognitive-services/account:0.7.2' = if (useSpee
     name: !empty(speechServiceName) ? speechServiceName : '${abbrs.cognitiveServicesSpeech}${resourceToken}'
     kind: 'SpeechServices'
     networkAcls: {
-      defaultAction: 'Allow'
+      defaultAction: dataPlaneNetworkAclsDefaultAction
     }
     customSubDomainName: !empty(speechServiceName)
       ? speechServiceName
@@ -927,7 +965,7 @@ module storage 'core/storage/storage-account.bicep' = {
     }
     deleteRetentionPolicy: {
       enabled: true
-      days: 2
+      days: 30
     }
     containers: [
       {
@@ -997,7 +1035,7 @@ module adlsStorage 'core/storage/storage-account.bicep' = if (useCloudIngestionA
     }
     deleteRetentionPolicy: {
       enabled: true
-      days: 2
+      days: 30
     }
     containers: [
       {

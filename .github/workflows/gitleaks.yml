@@ -1,0 +1,33 @@
+name: Gitleaks
+
+on:
+  push:
+    branches: [ main, security/** ]
+  pull_request:
+    branches: [ main ]
+  schedule:
+    - cron: '23 7 * * 1'
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  scan:
+    name: Scan repository for secrets
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          # GITLEAKS_LICENSE is only required for private orgs; public repos work without it.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          # Fail the build on any finding. Use .gitleaks.toml to allowlist known false positives.
+          config-path: .gitleaks.toml

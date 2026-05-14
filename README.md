@@ -2,6 +2,8 @@
 
 A Retrieval-Augmented Generation (RAG) chat application built on Azure that provides AI-powered answers grounded in your organization's documents — with **clickable citation links** that let users view and download the original source files directly from the browser.
 
+> 🔒 **Security defaults changed.** This fork ships with sign-in required, private data plane, and stricter network/storage defaults by default. See [SECURITY-HARDENING.md](SECURITY-HARDENING.md) for the full list and for the demo-mode opt-out.
+
 ## Solution Architecture
 
 ```
