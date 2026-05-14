@@ -1,0 +1,51 @@
+name: PSRule for Azure
+
+on:
+  push:
+    branches: [ main, security/** ]
+    paths:
+      - 'infra/**'
+      - '.github/workflows/psrule.yml'
+      - 'ps-rule.yaml'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'infra/**'
+      - '.github/workflows/psrule.yml'
+      - 'ps-rule.yaml'
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  analyze:
+    name: Analyze Bicep against Azure Well-Architected baselines
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Bicep
+        run: |
+          curl -Lo bicep https://github.com/Azure/bicep/releases/latest/download/bicep-linux-x64
+          chmod +x bicep
+          sudo mv bicep /usr/local/bin/bicep
+          bicep --version
+
+      - name: Run PSRule analysis
+        uses: microsoft/ps-rule@v2.9.0
+        with:
+          modules: 'PSRule.Rules.Azure'
+          inputPath: 'infra/'
+          baseline: 'Azure.Default'
+          outputFormat: Sarif
+          outputPath: psrule-results.sarif.json
+
+      - name: Upload SARIF results
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: psrule-results.sarif.json
+          category: psrule

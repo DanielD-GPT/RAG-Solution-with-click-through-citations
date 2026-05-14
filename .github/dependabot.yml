@@ -1,0 +1,49 @@
+version: 2
+updates:
+  - package-ecosystem: "pip"
+    directory: "/app/backend"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10
+    labels: [ "dependencies", "python" ]
+    groups:
+      python-runtime:
+        patterns: [ "*" ]
+        update-types: [ "minor", "patch" ]
+
+  - package-ecosystem: "pip"
+    directory: "/scripts"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    labels: [ "dependencies", "python" ]
+
+  - package-ecosystem: "pip"
+    directory: "/app/functions"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    labels: [ "dependencies", "python" ]
+
+  - package-ecosystem: "npm"
+    directory: "/app/frontend"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10
+    labels: [ "dependencies", "javascript" ]
+    groups:
+      npm-runtime:
+        patterns: [ "*" ]
+        update-types: [ "minor", "patch" ]
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    labels: [ "dependencies", "github-actions" ]
+
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    labels: [ "dependencies", "docker" ]
