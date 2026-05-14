@@ -38,7 +38,9 @@ param minimumElasticInstanceCount int = -1
 param numberOfWorkers int = -1
 param scmDoBuildDuringDeployment bool = false
 param use32BitWorkerProcess bool = false
-param ftpsState string = 'FtpsOnly'
+// Disabled by default. The site is deployed via `azd`/CI using OIDC or RBAC;
+// there is no reason to leave FTP credentials available.
+param ftpsState string = 'Disabled'
 param healthCheckPath string = ''
 param clientAppId string = ''
 param serverAppId string = ''

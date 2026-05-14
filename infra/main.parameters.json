@@ -276,7 +276,7 @@
       "value": "${AZURE_SPEECH_SERVICE_VOICE}"
     },
     "useAuthentication": {
-      "value": "${AZURE_USE_AUTHENTICATION=false}"
+      "value": "${AZURE_USE_AUTHENTICATION=true}"
     },
     "enforceAccessControl": {
       "value": "${AZURE_ENFORCE_ACCESS_CONTROL=false}"
@@ -309,16 +309,22 @@
       "value": "${ALLOWED_ORIGIN}"
     },
     "publicNetworkAccess": {
-      "value": "${AZURE_PUBLIC_NETWORK_ACCESS=Enabled}"
+      "value": "${AZURE_PUBLIC_NETWORK_ACCESS=Disabled}"
+    },
+    "appPublicNetworkAccess": {
+      "value": "${AZURE_APP_PUBLIC_NETWORK_ACCESS=Enabled}"
+    },
+    "dataPlanePublicNetworkAccess": {
+      "value": "${AZURE_DATAPLANE_PUBLIC_NETWORK_ACCESS=Disabled}"
     },
     "usePrivateEndpoint": {
-      "value": "${AZURE_USE_PRIVATE_ENDPOINT=false}"
+      "value": "${AZURE_USE_PRIVATE_ENDPOINT=true}"
     },
     "useVpnGateway": {
       "value": "${AZURE_USE_VPN_GATEWAY=false}"
     },
     "bypass": {
-      "value": "${AZURE_NETWORK_BYPASS=AzureServices}"
+      "value": "${AZURE_NETWORK_BYPASS=None}"
     },
     "useIntegratedVectorization": {
       "value": "${USE_FEATURE_INT_VECTORIZATION}"
