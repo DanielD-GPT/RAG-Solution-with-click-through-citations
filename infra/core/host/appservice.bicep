@@ -52,6 +52,25 @@ param publicNetworkAccess string = 'Enabled'
 param enableUnauthenticatedAccess bool = false
 param disableAppServicesAuthentication bool = false
 
+@description('Optional. When set, App Service will reject any request that does not carry the matching X-Azure-FDID header. Use the frontDoorId output of the Front Door module. When empty, no header check is applied.')
+param frontDoorId string = ''
+
+var ipSecurityRestrictions = empty(frontDoorId) ? [] : [
+  {
+    name: 'AllowFrontDoorOnly'
+    description: 'Only accept traffic from the paired Azure Front Door profile.'
+    action: 'Allow'
+    priority: 100
+    headers: {
+      'x-azure-fdid': [ frontDoorId ]
+    }
+    tag: 'ServiceTag'
+    ipAddress: 'AzureFrontDoor.Backend'
+  }
+]
+
+var ipSecurityRestrictionsDefaultAction = empty(frontDoorId) ? 'Allow' : 'Deny'
+
 // .default must be the 1st scope for On-Behalf-Of-Flow combined consent to work properly
 // Please see https://learn.microsoft.com/entra/identity-platform/v2-oauth2-on-behalf-of-flow#default-and-combined-consent
 var requiredScopes = [ 'api://${serverAppId}/.default', 'openid', 'profile', 'email', 'offline_access' ]
@@ -71,6 +90,10 @@ var coreConfig = {
   cors: {
     allowedOrigins: allowedOrigins
   }
+  ipSecurityRestrictions: ipSecurityRestrictions
+  #disable-next-line BCP037
+  ipSecurityRestrictionsDefaultAction: ipSecurityRestrictionsDefaultAction
+  scmIpSecurityRestrictionsUseMain: false
 }
 
 var appServiceProperties = {
@@ -180,3 +203,4 @@ output id string = appService.id
 output identityPrincipalId string = managedIdentity ? appService.identity.principalId : ''
 output name string = appService.name
 output uri string = 'https://${appService.properties.defaultHostName}'
+output defaultHostName string = appService.properties.defaultHostName

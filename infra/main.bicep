@@ -329,6 +329,21 @@ param usePrivateEndpoint bool = true
 @description('Use a P2S VPN Gateway for secure access to the private endpoints')
 param useVpnGateway bool = false
 
+@description('Provision an Azure Front Door Premium + WAF in front of the application. When enabled the App Service / Container App is locked down so that only requests carrying the matching X-Azure-FDID header are accepted. Off by default because adopting it requires adding the Front Door hostname to the Entra app registration redirect URIs.')
+param useFrontDoor bool = false
+
+@description('WAF mode. Use Prevention in production; Detection only for tuning runs.')
+@allowed([ 'Prevention', 'Detection' ])
+param frontDoorWafMode string = 'Prevention'
+
+@description('Per-IP request limit per minute enforced by the WAF. Default 600 (10 req/sec sustained).')
+@minValue(10)
+@maxValue(20000)
+param frontDoorRateLimitPerMinute int = 600
+
+@description('Optional ISO 3166-1 alpha-2 country codes (e.g. [ "US", "CA" ]). When non-empty the WAF blocks all other origins. Empty array = no geo filter.')
+param frontDoorAllowedCountries array = []
+
 @description('Id of the user or app to assign application roles')
 param principalId string = ''
 
@@ -610,6 +625,22 @@ var appEnvVariables = {
   USE_SHAREPOINT_SOURCE: useSharePointSource
 }
 
+// Front Door + WAF (phase 1: profile + WAF + endpoint, no origin yet).
+// The frontDoorId output is fed into the backend modules so they can refuse
+// any request whose X-Azure-FDID header doesn't match. The origin and route
+// are configured by frontDoorOrigin below, after the backend host is known.
+module frontDoor 'core/networking/frontdoor-waf.bicep' = if (useFrontDoor) {
+  name: 'frontdoor'
+  scope: resourceGroup
+  params: {
+    name: 'afd-${resourceToken}'
+    tags: tags
+    allowedCountries: frontDoorAllowedCountries
+    rateLimitThresholdPerMinute: frontDoorRateLimitPerMinute
+    wafMode: frontDoorWafMode
+  }
+}
+
 // App Service for the web application (Python Quart app with JS frontend)
 module backend 'core/host/appservice.bicep' = if (deploymentTarget == 'appservice') {
   name: 'web'
@@ -636,9 +667,11 @@ module backend 'core/host/appservice.bicep' = if (deploymentTarget == 'appservic
     authenticationIssuerUri: authenticationIssuerUri
     use32BitWorkerProcess: appServiceSkuName == 'F1'
     alwaysOn: appServiceSkuName != 'F1'
+    frontDoorId: useFrontDoor ? frontDoor!.outputs.frontDoorId : ''
     appSettings: union(appEnvVariables, {
       AZURE_SERVER_APP_SECRET: serverAppSecret
       AZURE_CLIENT_APP_SECRET: clientAppSecret
+      AZURE_EXPECTED_FRONT_DOOR_ID: useFrontDoor ? frontDoor!.outputs.frontDoorId : ''
     })
   }
 }
@@ -691,6 +724,7 @@ module acaBackend 'core/host/container-app-upsert.bicep' = if (deploymentTarget 
     env: union(appEnvVariables, {
       // For using managed identity to access Azure resources. See https://github.com/microsoft/azure-container-apps/issues/442
       AZURE_CLIENT_ID: (deploymentTarget == 'containerapps') ? acaIdentity!.outputs.clientId : ''
+      AZURE_EXPECTED_FRONT_DOOR_ID: useFrontDoor ? frontDoor!.outputs.frontDoorId : ''
     })
     secrets: useAuthentication ? {
       azureclientappsecret: clientAppSecret
@@ -721,6 +755,20 @@ module acaAuth 'core/host/container-apps-auth.bicep' = if (deploymentTarget == '
     enableUnauthenticatedAccess: enableUnauthenticatedAccess
     blobContainerUri: 'https://${storageAccountName}.blob.${environment().suffixes.storage}/${tokenStorageContainerName}'
     appIdentityResourceId: (deploymentTarget == 'appservice') ? '' : acaBackend!.outputs.identityResourceId
+  }
+}
+
+// Front Door + WAF phase 2: configure the origin and route on the existing
+// profile. The origin host depends on which deployment target was used.
+module frontDoorOrigin 'core/networking/frontdoor-origin.bicep' = if (useFrontDoor) {
+  name: 'frontdoor-origin'
+  scope: resourceGroup
+  params: {
+    profileName: useFrontDoor ? frontDoor!.outputs.profileName : ''
+    endpointName: useFrontDoor ? frontDoor!.outputs.endpointName : ''
+    originHostName: deploymentTarget == 'appservice'
+      ? backend!.outputs.defaultHostName
+      : acaBackend!.outputs.fqdn
   }
 }
 

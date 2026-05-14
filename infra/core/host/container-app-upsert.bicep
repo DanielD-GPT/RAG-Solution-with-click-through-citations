@@ -126,6 +126,7 @@ output defaultDomain string = app.outputs.defaultDomain
 output imageName string = app.outputs.imageName
 output name string = app.outputs.name
 output uri string = app.outputs.uri
+output fqdn string = app.outputs.fqdn
 output id string = app.outputs.id
 output identityPrincipalId string = app.outputs.identityPrincipalId
 output identityResourceId string = app.outputs.identityResourceId

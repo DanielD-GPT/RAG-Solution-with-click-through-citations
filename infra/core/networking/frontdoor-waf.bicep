@@ -1,16 +1,10 @@
-metadata description = 'Provisions an Azure Front Door Premium profile with a managed WAF (prevention mode) in front of the application origin. Front Door enforces TLS, geo-filtering, and rate-limit / OWASP rules, and stamps an X-Azure-FDID header that the backend MUST validate so the origin cannot be hit directly.'
+metadata description = 'Phase 1 of the Front Door + WAF setup. Provisions the Front Door Premium profile, AFD endpoint, WAF policy, and the security-policy association. NO origin is configured here — the origin and route are added by frontdoor-origin.bicep after the application is deployed. This split exists to break the chicken-and-egg dependency between the app (which needs frontDoorId from this module) and Front Door (which needs the app hostname for its origin).'
 
 @description('Profile name. Must be globally unique.')
 param name string
 
 @description('Tags applied to the Front Door profile and policy.')
 param tags object = {}
-
-@description('Backend origin hostname (e.g. mywebapp.azurewebsites.net or aca app FQDN).')
-param originHostName string
-
-@description('Backend origin host header. Defaults to the origin hostname.')
-param originHostHeader string = originHostName
 
 @description('Allowed country codes (ISO 3166-1 alpha-2). Empty array = no geo filter.')
 param allowedCountries array = []
@@ -114,57 +108,6 @@ resource endpoint 'Microsoft.Cdn/profiles/afdEndpoints@2024-02-01' = {
   }
 }
 
-resource originGroup 'Microsoft.Cdn/profiles/originGroups@2024-02-01' = {
-  parent: profile
-  name: 'default-origin-group'
-  properties: {
-    loadBalancingSettings: {
-      sampleSize: 4
-      successfulSamplesRequired: 3
-      additionalLatencyInMilliseconds: 50
-    }
-    healthProbeSettings: {
-      probePath: '/'
-      probeRequestType: 'HEAD'
-      probeProtocol: 'Https'
-      probeIntervalInSeconds: 60
-    }
-  }
-}
-
-resource origin 'Microsoft.Cdn/profiles/originGroups/origins@2024-02-01' = {
-  parent: originGroup
-  name: 'default-origin'
-  properties: {
-    hostName: originHostName
-    httpsPort: 443
-    originHostHeader: originHostHeader
-    priority: 1
-    weight: 1000
-    enabledState: 'Enabled'
-    enforceCertificateNameCheck: true
-  }
-}
-
-resource route 'Microsoft.Cdn/profiles/afdEndpoints/routes@2024-02-01' = {
-  parent: endpoint
-  name: 'default-route'
-  properties: {
-    originGroup: {
-      id: originGroup.id
-    }
-    supportedProtocols: [ 'Https' ]
-    patternsToMatch: [ '/*' ]
-    forwardingProtocol: 'HttpsOnly'
-    httpsRedirect: 'Enabled'
-    linkToDefaultDomain: 'Enabled'
-    enabledState: 'Enabled'
-  }
-  dependsOn: [
-    origin
-  ]
-}
-
 resource securityPolicy 'Microsoft.Cdn/profiles/securityPolicies@2024-02-01' = {
   parent: profile
   name: 'default-security-policy'
@@ -189,5 +132,7 @@ resource securityPolicy 'Microsoft.Cdn/profiles/securityPolicies@2024-02-01' = {
 }
 
 output frontDoorId string = profile.properties.frontDoorId
+output profileName string = profile.name
+output endpointName string = endpoint.name
 output endpointHostName string = endpoint.properties.hostName
 output wafPolicyId string = policy.id
