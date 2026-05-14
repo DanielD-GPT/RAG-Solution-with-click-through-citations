@@ -2,7 +2,7 @@ azure-functions>=1.24.0
 azure-identity
 quart
 quart-cors
-openai>=1.109.1
+openai>=2.36.0
 tiktoken
 tenacity
 azure-ai-documentintelligence==1.0.2
