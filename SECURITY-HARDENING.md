@@ -24,6 +24,7 @@ The defaults are tuned for **regulated / internal-business workloads**, not publ
 | CORS origin filter | accepts any string in `ALLOWED_ORIGIN` | **must be `https://...` with no trailing `/`**. |
 | Portal CORS origins | always added | added **only when an Entra client app is configured**. |
 | `/content/<path>` route | only path-traversal check | **strict allow-list** + scheme rejection + length cap + double-encode rejection + control-char rejection. See [`tests/test_content_path_validation.py`](tests/test_content_path_validation.py). |
+| Diagnostic settings → Log Analytics | none | **wired on every data-plane resource** (Storage, OpenAI, Document Intelligence, Vision, Content Understanding, Speech, Search, Cosmos, App Service / Container App) when `useApplicationInsights=true`. |
 | CI security scans | none | **CodeQL, gitleaks, PSRule for Azure, Dependabot**. |
 
 ### Demo-mode opt-out
@@ -121,28 +122,17 @@ Then **lock down the origin** so it only accepts traffic from Front Door:
 
 Finally, register the Front Door hostname as a redirect URI on the Entra client app and run `scripts/auth_update.py` (or the equivalent).
 
-### 3. Diagnostic settings → Log Analytics
+### 3. Diagnostic settings → Log Analytics *(wired in by default)*
 
-A reusable Bicep module is not provided because the `Microsoft.Insights/diagnosticSettings` resource requires a typed parent reference and a generic wrapper isn't worthwhile.
+Wired in by default whenever `useApplicationInsights=true` (which provisions the Log Analytics workspace). See `infra/core/monitor/*-diagnostics.bicep`:
 
-Add this inline next to each resource you want to capture (Storage, Cosmos, Search, OpenAI, Key Vault, App Service / Container Apps):
+- `storage-diagnostics.bicep` — account + blob/file/queue/table services (covers `StorageRead`/`StorageWrite`/`StorageDelete`).
+- `cognitiveservices-diagnostics.bicep` — reused for OpenAI, Document Intelligence, Vision, Content Understanding, Speech.
+- `cosmos-diagnostics.bicep` — `DataPlaneRequests` + `ControlPlaneRequests` + audit.
+- `appservice-diagnostics.bicep` and `containerapp-diagnostics.bicep` — host audit + HTTP logs + all metrics.
+- Search already had `search-diagnostics.bicep`.
 
-```bicep
-resource diagStorage 'Microsoft.Insights/diagnosticSettings@2021-05-01-preview' = {
-  name: 'diag-to-law'
-  scope: storage::blobService
-  properties: {
-    workspaceId: monitoring!.outputs.logAnalyticsWorkspaceId
-    logs: [
-      { categoryGroup: 'allLogs', enabled: true }
-      { categoryGroup: 'audit', enabled: true }
-    ]
-    metrics: [ { category: 'AllMetrics', enabled: true } ]
-  }
-}
-```
-
-Repeat for each resource type. The `monitoring` module already provisions the workspace; no additional infra is required.
+Each is wired from `main.bicep` immediately after the resource it observes; all gated on `useApplicationInsights`. Set `AZURE_USE_APPLICATION_INSIGHTS=true` to enable them.
 
 ### 4. Workload Identity Federation (WIF) for the backend MSAL flow
 
