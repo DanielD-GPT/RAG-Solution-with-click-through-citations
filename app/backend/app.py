@@ -4,7 +4,9 @@ import json
 import logging
 import mimetypes
 import os
+import re
 import time
+import urllib.parse
 from collections.abc import AsyncGenerator, Awaitable, Callable
 from pathlib import Path
 from typing import Any, cast
@@ -134,6 +136,60 @@ async def assets(path):
     return await send_from_directory(Path(__file__).resolve().parent / "static" / "assets", path)
 
 
+# Defence-in-depth allow-list for /content/<path>. We deliberately reject anything that
+# could trick the backend's managed identity into fetching blobs outside the configured
+# content container (path traversal, alternate containers, absolute URLs, SSRF probes).
+# Allowed: a single blob name, optionally inside one nested folder, made up of
+# letters, digits, dot, dash, underscore, space, and parentheses. Max 256 chars total.
+_SAFE_CONTENT_PATH = re.compile(r"^[A-Za-z0-9._\-()\u0020]+(?:/[A-Za-z0-9._\-()\u0020]+)?$")
+_MAX_CONTENT_PATH_LEN = 256
+
+
+def _sanitize_content_path(raw_path: str) -> str | None:
+    """
+    Normalize and validate a user-supplied /content/<path> value.
+    Returns the cleaned path if safe, otherwise None. Callers MUST treat
+    a None return as a hard 400 — do not pass the original value downstream.
+    """
+    if raw_path is None:
+        return None
+    # URL-decode once. Anything that's still encoded after one pass is suspicious.
+    try:
+        decoded = urllib.parse.unquote(raw_path, errors="strict")
+    except (UnicodeDecodeError, ValueError):
+        return None
+    if "%" in decoded:
+        # Double-encoding attempt.
+        return None
+    # Strip the optional #page=N fragment (browsers don't send it, but legacy clients might).
+    if "#page=" in decoded:
+        decoded = decoded.split("#page=", 1)[0]
+    # No NULs, no control chars, no CR/LF.
+    if any(ord(c) < 0x20 or ord(c) == 0x7F for c in decoded):
+        return None
+    # No absolute URLs, no scheme, no UNC, no Windows drive, no leading slash, no backslashes.
+    lowered = decoded.lower()
+    if (
+        lowered.startswith(("http://", "https://", "//", "\\\\", "file:", "ftp:"))
+        or decoded.startswith("/")
+        or "\\" in decoded
+        or ":" in decoded
+    ):
+        return None
+    # No path traversal segments anywhere.
+    parts = decoded.split("/")
+    if any(p in ("", ".", "..") for p in parts):
+        return None
+    # No query string, no fragment leftovers.
+    if "?" in decoded or "#" in decoded:
+        return None
+    if len(decoded) > _MAX_CONTENT_PATH_LEN:
+        return None
+    if not _SAFE_CONTENT_PATH.fullmatch(decoded):
+        return None
+    return decoded
+
+
 @bp.route("/content/<path>")
 @authenticated_path
 async def content_file(path: str, auth_claims: dict[str, Any]):
@@ -143,12 +199,17 @@ async def content_file(path: str, auth_claims: dict[str, Any]):
     if AZURE_ENFORCE_ACCESS_CONTROL is not set or false, logged in users can access all files regardless of access control
     if AZURE_ENFORCE_ACCESS_CONTROL is set to true, logged in users can only access files they have access to
     This is also slow and memory hungry.
+
+    SECURITY: the user-supplied <path> is validated against a strict allow-list BEFORE
+    being passed to the BlobManager. The backend identity has read access to the entire
+    storage account, so the route boundary is the only thing preventing an anonymous or
+    low-privilege caller from enumerating blobs outside the configured content container.
     """
-    # Remove page number from path, filename-1.txt -> filename.txt
-    # This shouldn't typically be necessary as browsers don't send hash fragments to servers
-    if path.find("#page=") > 0:
-        path_parts = path.rsplit("#page=", 1)
-        path = path_parts[0]
+    safe_path = _sanitize_content_path(path)
+    if safe_path is None:
+        current_app.logger.warning("Rejected /content path that failed validation: %r", path)
+        abort(400)
+    path = safe_path
     current_app.logger.info("Opening file %s", path)
     blob_manager: BlobManager = current_app.config[CONFIG_GLOBAL_BLOB_MANAGER]
 
