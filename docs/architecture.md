@@ -15,13 +15,17 @@ graph TB
         Browser[🌐 Web Browser]
     end
 
+    subgraph "Edge (opt-in: useFrontDoor=true)"
+        AFD[🛡️ Azure Front Door Premium + WAF<br/>DefaultRuleSet 2.1 + BotManagerRuleSet 1.1<br/>Rate limit + optional geo allowlist<br/>Origin lockdown via X-Azure-FDID]
+    end
+
     subgraph "Application Layer"
         subgraph "Frontend"
             React[⚛️ React/TypeScript App<br/>Chat Interface<br/>Settings Panel<br/>Citation Display]
         end
 
         subgraph "Backend"
-            API[🐍 Python API<br/>Flask/Quart<br/>Chat Endpoints<br/>Document Upload<br/>Authentication]
+            API[🐍 Python API Quart<br/>Entra sign-in required<br/>/chat + /content allow-listed<br/>System-assigned managed identity]
 
             subgraph "Approaches"
                 CRR[ChatReadRetrieveRead<br/>Approach]
@@ -29,24 +33,29 @@ graph TB
         end
     end
 
-    subgraph "Azure Services"
+    subgraph "Identity (Microsoft Entra ID)"
+        Entra[🔑 Entra apps<br/>Client app for sign-in<br/>Server app for OBO<br/>Federated credential opt-in:<br/>MI → server app no secret]
+    end
+
+    subgraph "Azure Services (private endpoints, disableLocalAuth=true where supported)"
         subgraph "AI Services"
-            OpenAI[🤖 Azure OpenAI<br/>GPT-4 Mini<br/>Text Embeddings<br/>GPT-4 Vision]
-            Search[🔍 Azure AI Search<br/>Vector Search<br/>Semantic Ranking<br/>Full-text Search]
-            DocIntel[📄 Azure Document<br/>Intelligence<br/>Text Extraction<br/>Layout Analysis]
+            OpenAI[🤖 Azure OpenAI<br/>azureOpenAiDisableKeys=true<br/>publicNetworkAccess=Disabled]
+            Search[🔍 Azure AI Search<br/>disableLocalAuth=true<br/>private endpoint]
+            DocIntel[📄 Azure Document<br/>Intelligence<br/>MI auth]
             Vision2[👁️ Azure AI Vision<br/>optional]
             Speech[🎤 Azure Speech<br/>Services optional]
         end
 
         subgraph "Storage & Data"
-            Blob[💾 Azure Blob Storage<br/>Document Storage<br/>User Uploads]
-            Cosmos[🗃️ Azure Cosmos DB<br/>Chat History<br/>optional]
+            Blob[💾 Azure Blob Storage<br/>allowSharedKeyAccess=false<br/>30d soft-delete + versioning<br/>bypass=None defaultAction=Deny]
+            Cosmos[🗃️ Azure Cosmos DB<br/>disableLocalAuth=true<br/>optional chat history]
         end
 
         subgraph "Platform Services"
-            ContainerApps[📦 Azure Container Apps<br/>or App Service<br/>Application Hosting]
-            AppInsights[📊 Application Insights<br/>Monitoring<br/>Telemetry]
-            KeyVault[🔐 Azure Key Vault<br/>Secrets Management]
+            ContainerApps[📦 Azure Container Apps<br/>or App Service<br/>httpsOnly + ftpsState=Disabled<br/>vnet integration]
+            AppInsights[📊 Application Insights]
+            LogAnalytics[🪵 Log Analytics Workspace<br/>diagnostic settings on every<br/>data-plane resource]
+            KeyVault[🔐 Azure Key Vault<br/>optional opt-in module]
         end
     end
 
@@ -56,8 +65,14 @@ graph TB
 
     %% User Interaction Flow
     User -.-> Browser
+    Browser <--> AFD
+    AFD -.-> React
     Browser <--> React
     React <--> API
+
+    %% Sign-in & token exchange
+    Browser <--> Entra
+    API <--> Entra
 
     %% Backend Processing
     API --> CRR
@@ -78,23 +93,36 @@ graph TB
     %% Platform Integration
     ContainerApps --> API
     API --> AppInsights
+    OpenAI --> LogAnalytics
+    Search --> LogAnalytics
+    Blob --> LogAnalytics
+    Cosmos --> LogAnalytics
+    DocIntel --> LogAnalytics
+    ContainerApps --> LogAnalytics
+    AppInsights --> LogAnalytics
     API --> KeyVault
 
     %% Styling
     classDef userLayer fill:#e1f5fe
+    classDef edgeLayer fill:#fff9c4
     classDef appLayer fill:#f3e5f5
+    classDef identityLayer fill:#ffe0b2
     classDef azureAI fill:#e8f5e8
     classDef azureStorage fill:#fff3e0
     classDef azurePlatform fill:#fce4ec
     classDef processing fill:#f1f8e9
 
     class User,Browser userLayer
+    class AFD edgeLayer
     class React,API,CRR appLayer
+    class Entra identityLayer
     class OpenAI,Search,DocIntel,Vision2,Speech azureAI
     class Blob,Cosmos azureStorage
-    class ContainerApps,AppInsights,KeyVault azurePlatform
+    class ContainerApps,AppInsights,LogAnalytics,KeyVault azurePlatform
     class PrepDocs processing
 ```
+
+> The **Edge** layer (Azure Front Door + WAF) and the **federated identity credential** on the server Entra app are off by default. Enable them with `AZURE_USE_FRONT_DOOR=true` and `AZURE_USE_WORKLOAD_IDENTITY_FEDERATION=true` respectively. See [SECURITY-HARDENING.md](../SECURITY-HARDENING.md) for the full security posture, defaults, threat model, and production checklist.
 
 ## Chat Query Flow
 
