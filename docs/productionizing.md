@@ -86,13 +86,13 @@ Learn more in the [Azure Container Apps documentation](https://learn.microsoft.c
 
 ## Additional security measures
 
-* **Authentication**: By default, the deployed app is publicly accessible.
-  We recommend restricting access to authenticated users.
-  See [Enabling authentication](./deploy_features.md#enabling-authentication) to learn how to enable authentication.
-* **Networking**: We recommend [deploying inside a Virtual Network](./deploy_private.md). If the app is only for
-  internal enterprise use, use a private DNS zone. Also consider using Azure API Management (APIM)
-  for firewalls and other forms of protection.
-  For more details, read [Azure OpenAI Landing Zone reference architecture](https://techcommunity.microsoft.com/blog/azurearchitectureblog/azure-openai-landing-zone-reference-architecture/3882102).
+> 🔒 **This fork's security defaults are already tightened.** Sign-in is required, the data plane is private by default, storage soft-delete + versioning are enabled, FTPS is disabled, the `/content/<path>` route is allow-listed, and CodeQL / Dependabot / gitleaks / PSRule run in CI. The full inventory, the demo-mode opt-out, and a production verification checklist live in [SECURITY-HARDENING.md](../SECURITY-HARDENING.md).
+
+* **Authentication**: Required by default. The deployment fails fast if no Entra app is configured. See [Enabling authentication](./deploy_features.md#enabling-authentication) and [Login + document-level ACLs](./login_and_acl.md).
+* **Networking**: Private endpoints are enabled by default. For full VNet isolation see [the private deployment guide](./deploy_private.md). For an additional WAF / DDoS layer in front of the application, opt in to Azure Front Door Premium + WAF via `azd env set AZURE_USE_FRONT_DOOR true` — origins are automatically locked down to require the `X-Azure-FDID` header (App Service) or the matching env var (Container Apps). See [SECURITY-HARDENING.md §Azure Front Door + WAF](../SECURITY-HARDENING.md#2-azure-front-door--waf--infracorenetworkingfrontdoor-wafbicep).
+* **Identity**: To eliminate `AZURE_SERVER_APP_SECRET` entirely, opt in to Workload Identity Federation via `azd env set AZURE_USE_WORKLOAD_IDENTITY_FEDERATION true`. The backend's managed identity mints a client-assertion JWT for the server Entra app; `scripts/auth_update.py` adds the matching federated identity credential at post-provision time. See [SECURITY-HARDENING.md §Workload Identity Federation](../SECURITY-HARDENING.md#4-workload-identity-federation-wif-for-the-backend-msal-flow).
+* **Observability**: Set `AZURE_USE_APPLICATION_INSIGHTS=true` to provision a Log Analytics workspace and wire diagnostic settings on every data-plane resource (Storage, Search, OpenAI, Cosmos, Document Intelligence, Vision, Speech, App Service / Container App).
+* **Reference architecture**: For deeper enterprise patterns, see the [Azure OpenAI Landing Zone reference architecture](https://techcommunity.microsoft.com/blog/azurearchitectureblog/azure-openai-landing-zone-reference-architecture/3882102).
 
 ## Load testing
 

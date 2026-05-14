@@ -197,6 +197,20 @@ The frontend renders citations as clickable elements. The backend `/content/<pat
 | `AZURE_SEARCH_INDEX` | Existing search index name (optional) | `my-index` |
 | `AZURE_STORAGE_ACCOUNT` | Storage account name | `mystorageaccount` |
 
+### Security feature flags
+
+| Environment Variable | Description | Default |
+|---|---|---|
+| `AZURE_USE_AUTHENTICATION` | Require Entra sign-in. Provisioning fails if no Entra app is configured. | `true` |
+| `AZURE_USE_PRIVATE_ENDPOINT` | Provision private endpoints for the data plane. | `true` |
+| `AZURE_DATAPLANE_PUBLIC_NETWORK_ACCESS` | Public network access on data-plane resources (Storage, Search, OpenAI, Cosmos, Document Intelligence). | `Disabled` |
+| `AZURE_NETWORK_BYPASS` | Storage firewall bypass. | `None` |
+| `AZURE_USE_FRONT_DOOR` | Provision Azure Front Door Premium + WAF and lock the origin down so only Front Door can reach it. See [SECURITY-HARDENING.md](SECURITY-HARDENING.md#2-azure-front-door--waf--infracorenetworkingfrontdoor-wafbicep). | `false` |
+| `AZURE_FRONT_DOOR_WAF_MODE` | WAF mode: `Prevention` or `Detection`. | `Prevention` |
+| `AZURE_FRONT_DOOR_RATE_LIMIT_PER_MINUTE` | Per-IP request limit per minute. | `600` |
+| `AZURE_USE_WORKLOAD_IDENTITY_FEDERATION` | Use the backend managed identity to mint a client-assertion JWT for the server Entra app instead of `AZURE_SERVER_APP_SECRET`. See [SECURITY-HARDENING.md](SECURITY-HARDENING.md#4-workload-identity-federation-wif-for-the-backend-msal-flow). | `false` |
+| `AZURE_USE_APPLICATION_INSIGHTS` | Application Insights + Log Analytics workspace + diagnostic settings on every data-plane resource. | `false` |
+
 ## Redeploying After Changes
 
 If you modify only the application code (prompts, backend, frontend):

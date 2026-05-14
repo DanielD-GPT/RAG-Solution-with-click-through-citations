@@ -20,6 +20,7 @@ You should typically enable these features before running `azd up`. Once you've 
 * [Enabling query rewriting](#enabling-query-rewriting)
 * [Adding an OpenAI load balancer](#adding-an-openai-load-balancer)
 * [Deploying with private endpoints](#deploying-with-private-endpoints)
+* [Deploying with Azure Front Door + WAF](#deploying-with-azure-front-door--waf)
 * [Using local parsers](#using-local-parsers)
 
 ## Using different chat models
@@ -333,11 +334,33 @@ azd env set USE_SPEECH_OUTPUT_BROWSER true
 
 ## Enabling authentication
 
-By default, the deployed Azure web app will have no authentication or access restrictions enabled, meaning anyone with routable network access to the web app can chat with your indexed data. If you'd like to automatically setup authentication and user login as part of the `azd up` process, see [this guide](./login_and_acl.md).
+> **This fork's default is `AZURE_USE_AUTHENTICATION=true`.** Provisioning fails if no Entra app is configured, so this section applies whenever you opt into the demo-mode opt-out (`azd env set AZURE_USE_AUTHENTICATION false`) and later want to put auth back on. See [SECURITY-HARDENING.md](../SECURITY-HARDENING.md) for the full security posture.
+
+By default, the deployed Azure web app **requires** Entra sign-in. If you'd like to automatically setup authentication and user login as part of the `azd up` process, see [this guide](./login_and_acl.md).
 
 Alternatively, you can manually require authentication to your Azure Active Directory by following the [Add app authentication](https://learn.microsoft.com/azure/app-service/scenario-secure-app-authentication-app-service) tutorial and set it up against the deployed web app.
 
 To then limit access to a specific set of users or groups, you can follow the steps from [Restrict your Microsoft Entra app to a set of users](https://learn.microsoft.com/entra/identity-platform/howto-restrict-your-app-to-a-set-of-users) by changing "Assignment Required?" option under the Enterprise Application, and then assigning users/groups access.  Users not granted explicit access will receive the error message -AADSTS50105: Your administrator has configured the application <app_name> to block users unless they are specifically granted ('assigned') access to the application.-
+
+### Enabling Workload Identity Federation (no server secret)
+
+To eliminate `AZURE_SERVER_APP_SECRET` from app settings entirely, opt in to Workload Identity Federation:
+
+```shell
+azd env set AZURE_USE_WORKLOAD_IDENTITY_FEDERATION true
+azd provision
+azd deploy
+```
+
+When enabled:
+
+* Bicep stops projecting `AZURE_SERVER_APP_SECRET` into App Service / Container App settings and sets `AZURE_USE_WORKLOAD_IDENTITY_FEDERATION=true` on the backend.
+* The backend MSAL `ConfidentialClientApplication` is configured with a callable `client_assertion` that mints a fresh JWT from the workload's managed identity for the `api://AzureADTokenExchange/.default` audience.
+* The `postprovision` hook (`scripts/auth_update.py`) discovers the backend MI's principal ID via `az` CLI and creates/updates a federated identity credential on the server Entra app (idempotent).
+
+Limitation: the **client** app secret is still required while Easy Auth handles sign-in. To remove it too, set `disableAppServicesAuthentication=true` and let the Python app handle sign-in via MSAL.
+
+See [SECURITY-HARDENING.md §Workload Identity Federation](../SECURITY-HARDENING.md#4-workload-identity-federation-wif-for-the-backend-msal-flow) for the full recipe.
 
 ## Enabling login and document level access control
 
@@ -401,6 +424,31 @@ Fortunately, this repository is designed for easy integration with other reposit
 ## Deploying with private endpoints
 
 It is possible to deploy this app with public access disabled, using Azure private endpoints and private DNS Zones. For more details, read [the private deployment guide](./deploy_private.md). That requires a multi-stage provisioning, so you will need to do more than just `azd up` after setting the environment variables.
+
+> **Note:** In this fork, `AZURE_USE_PRIVATE_ENDPOINT=true` and `AZURE_DATAPLANE_PUBLIC_NETWORK_ACCESS=Disabled` are the **defaults**. The single-stage `azd up` already provisions a private data plane; the multi-stage flow in [deploy_private.md](./deploy_private.md) is only needed if you also want the application ingress to be private.
+
+## Deploying with Azure Front Door + WAF
+
+To put an Azure Front Door Premium profile and Web Application Firewall in front of the application, set:
+
+```shell
+azd env set AZURE_USE_FRONT_DOOR true
+# Optional knobs (defaults shown):
+azd env set AZURE_FRONT_DOOR_WAF_MODE Prevention                # or Detection while tuning
+azd env set AZURE_FRONT_DOOR_RATE_LIMIT_PER_MINUTE 600
+azd up
+```
+
+What this provisions and configures:
+
+* A Front Door Premium profile with a managed endpoint.
+* A WAF policy attached via security policy, with the Microsoft DefaultRuleSet 2.1 and BotManagerRuleSet 1.1, a per-IP rate limit, and an optional geo allowlist (set the `frontDoorAllowedCountries` Bicep param to e.g. `[ "US", "CA" ]` to restrict).
+* An origin and route pointing at the deployed App Service / Container App.
+* **Origin lockdown**: App Service receives an `ipSecurityRestrictions` rule that requires both the `AzureFrontDoor.Backend` service tag **and** an `X-Azure-FDID` header equal to the paired profile's ID. Container Apps receive `AZURE_EXPECTED_FRONT_DOOR_ID` as an env var (in-app middleware enforcement is a follow-up since Container Apps ingress restrictions are CIDR-only).
+
+After Front Door is provisioned, **add the Front Door endpoint hostname to your Entra client app's redirect URIs** and re-run `scripts/auth_update.py` (or the post-provision hook) so users can sign in via the Front Door URL.
+
+See [SECURITY-HARDENING.md §Azure Front Door + WAF](../SECURITY-HARDENING.md#2-azure-front-door--waf--infracorenetworkingfrontdoor-wafbicep) for the full recipe and module reference.
 
 ## Using local parsers
 
