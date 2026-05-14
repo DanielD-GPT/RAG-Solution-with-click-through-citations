@@ -1131,6 +1131,112 @@ module ai 'core/ai/ai-environment.bicep' = if (useAiProject) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Diagnostic settings: route logs and metrics from data-plane resources and
+// the application host to the Log Analytics workspace provisioned by the
+// monitoring module. All settings are gated on `useApplicationInsights`
+// because the workspace only exists in that branch.
+// ---------------------------------------------------------------------------
+
+module storageDiagnostics 'core/monitor/storage-diagnostics.bicep' = if (useApplicationInsights) {
+  name: 'storage-diagnostics'
+  scope: storageResourceGroup
+  params: {
+    storageAccountName: storage.outputs.name
+    workspaceId: useApplicationInsights ? monitoring!.outputs.logAnalyticsWorkspaceId : ''
+  }
+}
+
+module userStorageDiagnostics 'core/monitor/storage-diagnostics.bicep' = if (useApplicationInsights && useUserUpload) {
+  name: 'user-storage-diagnostics'
+  scope: storageResourceGroup
+  params: {
+    storageAccountName: useUserUpload ? userStorage!.outputs.name : ''
+    workspaceId: useApplicationInsights ? monitoring!.outputs.logAnalyticsWorkspaceId : ''
+  }
+}
+
+module adlsStorageDiagnostics 'core/monitor/storage-diagnostics.bicep' = if (useApplicationInsights && useCloudIngestionAcls && !useExistingAdlsStorage) {
+  name: 'adls-storage-diagnostics'
+  scope: storageResourceGroup
+  params: {
+    storageAccountName: (useCloudIngestionAcls && !useExistingAdlsStorage) ? adlsStorage!.outputs.name : ''
+    workspaceId: useApplicationInsights ? monitoring!.outputs.logAnalyticsWorkspaceId : ''
+  }
+}
+
+module openAiDiagnostics 'core/monitor/cognitiveservices-diagnostics.bicep' = if (useApplicationInsights && isAzureOpenAiHost && deployAzureOpenAi) {
+  name: 'openai-diagnostics'
+  scope: openAiResourceGroup
+  params: {
+    accountName: (isAzureOpenAiHost && deployAzureOpenAi) ? openAi!.outputs.name : ''
+    workspaceId: useApplicationInsights ? monitoring!.outputs.logAnalyticsWorkspaceId : ''
+  }
+}
+
+module documentIntelligenceDiagnostics 'core/monitor/cognitiveservices-diagnostics.bicep' = if (useApplicationInsights) {
+  name: 'docintel-diagnostics'
+  scope: documentIntelligenceResourceGroup
+  params: {
+    accountName: documentIntelligence.outputs.name
+    workspaceId: useApplicationInsights ? monitoring!.outputs.logAnalyticsWorkspaceId : ''
+  }
+}
+
+module visionDiagnostics 'core/monitor/cognitiveservices-diagnostics.bicep' = if (useApplicationInsights && useMultimodal) {
+  name: 'vision-diagnostics'
+  scope: visionResourceGroup
+  params: {
+    accountName: useMultimodal ? vision!.outputs.name : ''
+    workspaceId: useApplicationInsights ? monitoring!.outputs.logAnalyticsWorkspaceId : ''
+  }
+}
+
+module contentUnderstandingDiagnostics 'core/monitor/cognitiveservices-diagnostics.bicep' = if (useApplicationInsights && useMediaDescriberAzureCU) {
+  name: 'contentunderstanding-diagnostics'
+  scope: contentUnderstandingResourceGroup
+  params: {
+    accountName: useMediaDescriberAzureCU ? contentUnderstanding!.outputs.name : ''
+    workspaceId: useApplicationInsights ? monitoring!.outputs.logAnalyticsWorkspaceId : ''
+  }
+}
+
+module speechDiagnostics 'core/monitor/cognitiveservices-diagnostics.bicep' = if (useApplicationInsights && useSpeechOutputAzure) {
+  name: 'speech-diagnostics'
+  scope: speechResourceGroup
+  params: {
+    accountName: useSpeechOutputAzure ? speech!.outputs.name : ''
+    workspaceId: useApplicationInsights ? monitoring!.outputs.logAnalyticsWorkspaceId : ''
+  }
+}
+
+module cosmosDiagnostics 'core/monitor/cosmos-diagnostics.bicep' = if (useApplicationInsights && useAuthentication && useChatHistoryCosmos) {
+  name: 'cosmos-diagnostics'
+  scope: resourceGroup
+  params: {
+    cosmosAccountName: (useAuthentication && useChatHistoryCosmos) ? cosmosDb!.outputs.name : ''
+    workspaceId: useApplicationInsights ? monitoring!.outputs.logAnalyticsWorkspaceId : ''
+  }
+}
+
+module appServiceDiagnostics 'core/monitor/appservice-diagnostics.bicep' = if (useApplicationInsights && deploymentTarget == 'appservice') {
+  name: 'appservice-diagnostics'
+  scope: resourceGroup
+  params: {
+    appServiceName: deploymentTarget == 'appservice' ? backend!.outputs.name : ''
+    workspaceId: useApplicationInsights ? monitoring!.outputs.logAnalyticsWorkspaceId : ''
+  }
+}
+
+module containerAppDiagnostics 'core/monitor/containerapp-diagnostics.bicep' = if (useApplicationInsights && deploymentTarget == 'containerapps') {
+  name: 'containerapp-diagnostics'
+  scope: resourceGroup
+  params: {
+    containerAppName: deploymentTarget == 'containerapps' ? acaBackend!.outputs.name : ''
+    workspaceId: useApplicationInsights ? monitoring!.outputs.logAnalyticsWorkspaceId : ''
+  }
+}
+
 
 // USER ROLES
 var principalType = empty(runningOnGh) && empty(runningOnAdo) ? 'User' : 'ServicePrincipal'
