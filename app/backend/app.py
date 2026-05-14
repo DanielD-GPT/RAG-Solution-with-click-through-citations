@@ -498,6 +498,12 @@ async def setup_clients():
     AZURE_SERVER_APP_SECRET = os.getenv("AZURE_SERVER_APP_SECRET")
     AZURE_CLIENT_APP_ID = os.getenv("AZURE_CLIENT_APP_ID")
     AZURE_AUTH_TENANT_ID = os.getenv("AZURE_AUTH_TENANT_ID", AZURE_TENANT_ID)
+    # When AZURE_USE_WORKLOAD_IDENTITY_FEDERATION=true the backend's managed identity
+    # mints a client-assertion JWT instead of using AZURE_SERVER_APP_SECRET. The server
+    # Entra app must have a matching federated identity credential trusting the MI.
+    AZURE_USE_WORKLOAD_IDENTITY_FEDERATION = (
+        os.getenv("AZURE_USE_WORKLOAD_IDENTITY_FEDERATION", "").lower() == "true"
+    )
 
     KB_FIELDS_CONTENT = os.getenv("KB_FIELDS_CONTENT", "content")
     KB_FIELDS_SOURCEPAGE = os.getenv("KB_FIELDS_SOURCEPAGE", "sourcepage")
@@ -628,6 +634,8 @@ async def setup_clients():
         tenant_id=AZURE_AUTH_TENANT_ID,
         enforce_access_control=AZURE_ENFORCE_ACCESS_CONTROL,
         enable_unauthenticated_access=AZURE_ENABLE_UNAUTHENTICATED_ACCESS,
+        use_federated_credential=AZURE_USE_WORKLOAD_IDENTITY_FEDERATION,
+        azure_credential=azure_credential if AZURE_USE_WORKLOAD_IDENTITY_FEDERATION else None,
     )
 
     if USE_SPEECH_OUTPUT_AZURE:

@@ -332,6 +332,9 @@
     "frontDoorRateLimitPerMinute": {
       "value": "${AZURE_FRONT_DOOR_RATE_LIMIT_PER_MINUTE=600}"
     },
+    "useWorkloadIdentityFederation": {
+      "value": "${AZURE_USE_WORKLOAD_IDENTITY_FEDERATION=false}"
+    },
     "bypass": {
       "value": "${AZURE_NETWORK_BYPASS=None}"
     },

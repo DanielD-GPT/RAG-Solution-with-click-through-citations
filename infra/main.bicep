@@ -344,6 +344,9 @@ param frontDoorRateLimitPerMinute int = 600
 @description('Optional ISO 3166-1 alpha-2 country codes (e.g. [ "US", "CA" ]). When non-empty the WAF blocks all other origins. Empty array = no geo filter.')
 param frontDoorAllowedCountries array = []
 
+@description('Use Workload Identity Federation: the backend\'s managed identity mints a client-assertion JWT for the server Entra app instead of AZURE_SERVER_APP_SECRET. Requires a matching federated identity credential on the server app (auth_update.py adds it post-provision). Off by default; turning it on suppresses AZURE_SERVER_APP_SECRET from app settings entirely.')
+param useWorkloadIdentityFederation bool = false
+
 @description('Id of the user or app to assign application roles')
 param principalId string = ''
 
@@ -669,8 +672,9 @@ module backend 'core/host/appservice.bicep' = if (deploymentTarget == 'appservic
     alwaysOn: appServiceSkuName != 'F1'
     frontDoorId: useFrontDoor ? frontDoor!.outputs.frontDoorId : ''
     appSettings: union(appEnvVariables, {
-      AZURE_SERVER_APP_SECRET: serverAppSecret
+      AZURE_SERVER_APP_SECRET: useWorkloadIdentityFederation ? '' : serverAppSecret
       AZURE_CLIENT_APP_SECRET: clientAppSecret
+      AZURE_USE_WORKLOAD_IDENTITY_FEDERATION: useWorkloadIdentityFederation
       AZURE_EXPECTED_FRONT_DOOR_ID: useFrontDoor ? frontDoor!.outputs.frontDoorId : ''
     })
   }
@@ -725,12 +729,15 @@ module acaBackend 'core/host/container-app-upsert.bicep' = if (deploymentTarget 
       // For using managed identity to access Azure resources. See https://github.com/microsoft/azure-container-apps/issues/442
       AZURE_CLIENT_ID: (deploymentTarget == 'containerapps') ? acaIdentity!.outputs.clientId : ''
       AZURE_EXPECTED_FRONT_DOOR_ID: useFrontDoor ? frontDoor!.outputs.frontDoorId : ''
+      AZURE_USE_WORKLOAD_IDENTITY_FEDERATION: useWorkloadIdentityFederation
     })
-    secrets: useAuthentication ? {
+    secrets: (useAuthentication && !useWorkloadIdentityFederation) ? {
       azureclientappsecret: clientAppSecret
       azureserverappsecret: serverAppSecret
-    } : {}
-    envSecrets: useAuthentication ? [
+    } : (useAuthentication ? {
+      azureclientappsecret: clientAppSecret
+    } : {})
+    envSecrets: (useAuthentication && !useWorkloadIdentityFederation) ? [
       {
         name: 'AZURE_CLIENT_APP_SECRET'
         secretRef: 'azureclientappsecret'
@@ -739,7 +746,12 @@ module acaBackend 'core/host/container-app-upsert.bicep' = if (deploymentTarget 
         name: 'AZURE_SERVER_APP_SECRET'
         secretRef: 'azureserverappsecret'
       }
-    ] : []
+    ] : (useAuthentication ? [
+      {
+        name: 'AZURE_CLIENT_APP_SECRET'
+        secretRef: 'azureclientappsecret'
+      }
+    ] : [])
   }
 }
 
